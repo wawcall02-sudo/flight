@@ -13,48 +13,32 @@
     display: block;
     margin: 0 auto;
     background: linear-gradient(to bottom, #001020, #000);
-    border: 2px solid #333;
   }
   #ui {
     position: absolute;
     top: 10px;
-    left: 10px;
-    color: #fff;
-    font-family: "Consolas", monospace;
-    font-size: 16px;
-  }
-  #gameover {
-    position: absolute;
-    top: 40%;
     left: 50%;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     color: white;
-    text-align: center;
-    display: none;
-  }
-  #restart {
-    margin-top: 10px;
-    padding: 10px 20px;
-    font-size: 16px;
+    font-family: Arial, sans-serif;
+    font-size: 18px;
+    display: flex;
+    justify-content: space-between;
+    width: 90%;
+    max-width: 480px;
   }
 </style>
 </head>
 <body>
 <canvas id="game" width="460" height="700"></canvas>
-<div id="ui">점수: 0 | 체력: 3</div>
-<div id="gameover">
-  <h2>게임 오버</h2>
-  <p id="highscore">최고 점수: 0</p>
-  <button id="restart">다시하기</button>
+<div id="ui">
+  <div id="score">Score: 0</div>
+  <div id="lives">❤️❤️❤️</div>
 </div>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-const ui = document.getElementById("ui");
-const gameoverDiv = document.getElementById("gameover");
-const highscoreEl = document.getElementById("highscore");
-const restartBtn = document.getElementById("restart");
 
 let mouseX = canvas.width / 2;
 let mouseY = canvas.height - 60;
@@ -62,257 +46,233 @@ let mouseY = canvas.height - 60;
 let player = {
   x: mouseX,
   y: mouseY,
-  width: 20, // 50% 축소
-  height: 20,
+  size: 15,
   hp: 3,
-  power: 1,
-  cooldown: 0
+  powerLevel: 0,
+  bullets: [],
+  canShoot: true
 };
 
-let bullets = [];
 let enemies = [];
 let enemyBullets = [];
 let powerups = [];
-let score = 0;
-let highscore = 0;
 let boss = null;
+
+let score = 0;
+let highScore = 0;
+let spawnInterval = 100;  // 25% 증가 → 실제는 프레임 간격이 줄어야 하므로 0.8배
+let enemyBulletCount = 3 * 1.4;  // 탄막 수 20% 증가
+let enemyBulletSize = player.size * 0.5; 
+let bossSpawnScore = 5000;
+let bossHpBase = 1000;
+
+let lastSpawn = 0;
+let frame = 0;
 let gameOver = false;
 
 canvas.addEventListener("mousemove", e => {
   const rect = canvas.getBoundingClientRect();
-  mouseX = e.clientX - rect.left;
-  mouseY = e.clientY - rect.top;
+  player.x = e.clientX - rect.left;
+  player.y = e.clientY - rect.top;
 });
 
-restartBtn.addEventListener("click", () => {
-  resetGame();
-});
-
-function resetGame() {
-  player.hp = 3;
-  player.power = 1;
-  score = 0;
-  enemies = [];
-  bullets = [];
-  enemyBullets = [];
-  powerups = [];
-  boss = null;
-  gameOver = false;
-  gameoverDiv.style.display = "none";
-  loop();
+function shoot() {
+  if (!player.canShoot) return;
+  let bullets = [];
+  if (player.powerLevel === 0) {
+    bullets.push({x: player.x, y: player.y - 20, dy: -6});
+  } else if (player.powerLevel === 1) {
+    bullets.push({x: player.x - 10, y: player.y - 20, dy: -6});
+    bullets.push({x: player.x + 10, y: player.y - 20, dy: -6});
+  } else {
+    bullets.push({x: player.x - 10, y: player.y - 20, dy: -6});
+    bullets.push({x: player.x + 10, y: player.y - 20, dy: -6});
+    // 2회 발사
+    setTimeout(() => {
+      player.bullets.push({x: player.x - 10, y: player.y - 20, dy: -6});
+      player.bullets.push({x: player.x + 10, y: player.y - 20, dy: -6});
+    }, 100);
+  }
+  player.bullets.push(...bullets);
+  player.canShoot = false;
+  setTimeout(() => (player.canShoot = true), 150);
 }
 
 function spawnEnemy() {
-  if (boss) return;
   enemies.push({
-    x: Math.random() * (canvas.width - 30) + 15,
+    x: Math.random() * (canvas.width - 20) + 10,
     y: -20,
-    width: 30,
-    height: 30,
     hp: Math.random() < 0.5 ? 1 : 2,
     cooldown: 0
   });
 }
 
 function spawnPowerup() {
-  powerups.push({
-    x: Math.random() * (canvas.width - 20) + 10,
-    y: -10,
-    width: 15,
-    height: 15
-  });
+  powerups.push({x: Math.random() * (canvas.width - 20) + 10, y: -10});
 }
 
-function spawnBoss() {
-  boss = {
-    x: canvas.width / 2 - 60,
-    y: 20,
-    width: 120,
-    height: 60,
-    hp: 60,
-    patternTimer: 0
-  };
-}
-
-function shootPlayer() {
-  if (player.cooldown <= 0) {
-    for (let i = 0; i < player.power; i++) {
-      const offset = (i - (player.power - 1) / 2) * 10;
-      bullets.push({ x: player.x + offset, y: player.y - 10, dy: -7 });
-    }
-    player.cooldown = 10;
-  }
-}
-
-function shootEnemy(enemy) {
-  if (enemy.cooldown <= 0) {
-    for (let i = 0; i < 3; i++) { // 1/3로 줄인 탄막 수
-      const angle = (Math.PI / 6) * (i - 1);
-      enemyBullets.push({
-        x: enemy.x,
-        y: enemy.y + 10,
-        dx: Math.sin(angle) * 2,
-        dy: Math.cos(angle) * 4
-      });
-    }
-    enemy.cooldown = 60 + Math.random() * 40;
-  }
-}
-
-function update() {
-  if (gameOver) return;
-
-  // 플레이어 즉시 마우스 따라감
-  player.x = mouseX;
-  player.y = mouseY;
-
-  player.cooldown--;
-  if (player.cooldown < 0) player.cooldown = 0;
-  shootPlayer();
-
-  // 총알 이동
-  bullets.forEach(b => b.y += b.dy);
-  bullets = bullets.filter(b => b.y > -20);
-
-  // 적 생성 빈도 (기본값)
-  if (Math.random() < 0.03) spawnEnemy();
-  if (Math.random() < 0.001) spawnPowerup();
-
-  enemies.forEach(e => {
-    e.y += 1;
-    e.cooldown--;
-    if (e.cooldown < 0) e.cooldown = 0;
-    shootEnemy(e);
-  });
-  enemies = enemies.filter(e => e.y < canvas.height + 50 && e.hp > 0);
-
-  // 적 탄환 이동
-  enemyBullets.forEach(b => { b.x += b.dx; b.y += b.dy; });
-  enemyBullets = enemyBullets.filter(b => b.y < canvas.height + 10 && b.y > -10 && b.x > -10 && b.x < canvas.width + 10);
-
-  // 파워업 이동
-  powerups.forEach(p => p.y += 2);
-  powerups = powerups.filter(p => p.y < canvas.height + 20);
-
-  // 충돌 체크
-  bullets.forEach(b => {
-    enemies.forEach(e => {
-      if (b.x > e.x - e.width/2 && b.x < e.x + e.width/2 && b.y > e.y - e.height/2 && b.y < e.y + e.height/2) {
-        e.hp--;
-        b.y = -999;
-        if (e.hp <= 0) {
-          score += 100;
-          // 사망 시 탄막 수 1/4
-          for (let i = 0; i < 2; i++) {
-            const angle = (Math.PI * 2 / 2) * i;
-            enemyBullets.push({
-              x: e.x, y: e.y,
-              dx: Math.cos(angle) * 2,
-              dy: Math.sin(angle) * 2
-            });
-          }
-        }
-      }
-    });
-    if (boss && b.x > boss.x && b.x < boss.x + boss.width && b.y > boss.y && b.y < boss.y + boss.height) {
-      boss.hp--;
-      b.y = -999;
-      if (boss.hp <= 0) {
-        score += 5000;
-        boss = null;
-      }
-    }
-  });
-  bullets = bullets.filter(b => b.y > -20);
-
-  // 플레이어 피격
-  enemyBullets.forEach(b => {
-    if (b.x > player.x - player.width/2 && b.x < player.x + player.width/2 && b.y > player.y - player.height/2 && b.y < player.y + player.height/2) {
-      player.hp--;
-      b.y = canvas.height + 999;
-    }
-  });
-
-  // 파워업 획득
-  powerups.forEach(p => {
-    if (p.x > player.x - 10 && p.x < player.x + 10 && p.y > player.y - 10 && p.y < player.y + 10) {
-      player.power = Math.min(player.power + 1, 5);
-      p.y = canvas.height + 999;
-    }
-  });
-
-  if (player.hp <= 0) {
-    gameOver = true;
-    highscore = Math.max(highscore, score);
-    highscoreEl.textContent = "최고 점수: " + highscore;
-    gameoverDiv.style.display = "block";
-  }
-
-  if (!boss && score >= 5000) spawnBoss();
-
-  // 보스 패턴
-  if (boss) {
-    boss.patternTimer++;
-    if (boss.patternTimer % 40 === 0) {
-      for (let i = 0; i < 24; i++) {
-        const angle = (Math.PI * 2 / 24) * i;
-        enemyBullets.push({
-          x: boss.x + boss.width / 2,
-          y: boss.y + boss.height / 2,
-          dx: Math.cos(angle) * 2.5,
-          dy: Math.sin(angle) * 2.5
-        });
-      }
-    }
-  }
-
-  ui.textContent = `점수: ${score} | 체력: ${player.hp}`;
-}
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // 플레이어
-  ctx.fillStyle = "cyan";
+function drawTriangle(x, y, size, color) {
+  ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(player.x, player.y - 10);
-  ctx.lineTo(player.x - 10, player.y + 10);
-  ctx.lineTo(player.x + 10, player.y + 10);
+  ctx.moveTo(x, y - size);
+  ctx.lineTo(x - size, y + size);
+  ctx.lineTo(x + size, y + size);
   ctx.closePath();
   ctx.fill();
-
-  // 총알
-  ctx.fillStyle = "yellow";
-  bullets.forEach(b => ctx.fillRect(b.x - 2, b.y - 10, 4, 8));
-
-  // 적
-  ctx.fillStyle = "red";
-  enemies.forEach(e => ctx.fillRect(e.x - e.width/2, e.y - e.height/2, e.width, e.height));
-
-  // 적 탄환
-  ctx.fillStyle = "orange";
-  enemyBullets.forEach(b => ctx.fillRect(b.x - 2, b.y - 2, 4, 4));
-
-  // 파워업
-  ctx.fillStyle = "lime";
-  powerups.forEach(p => ctx.beginPath(), ctx.arc(p.x, p.y, 6, 0, Math.PI * 2), ctx.fill());
-
-  // 보스
-  if (boss) {
-    ctx.fillStyle = "purple";
-    ctx.fillRect(boss.x, boss.y, boss.width, boss.height);
-    ctx.fillStyle = "white";
-    ctx.fillRect(boss.x, boss.y - 10, boss.width * (boss.hp / 60), 4);
-  }
 }
 
 function loop() {
-  if (!gameOver) {
-    update();
-    draw();
-    requestAnimationFrame(loop);
+  if (gameOver) return;
+
+  frame++;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 적 출현
+  if (frame - lastSpawn > spawnInterval) {
+    spawnEnemy();
+    lastSpawn = frame;
   }
+
+  // 파워업 출현
+  if (Math.random() < 0.002) spawnPowerup();
+
+  // 플레이어 총알
+  player.bullets.forEach((b, i) => {
+    b.y += b.dy;
+    ctx.fillStyle = "cyan";
+    ctx.fillRect(b.x - 2, b.y - 10, 4, 10);
+    if (b.y < 0) player.bullets.splice(i, 1);
+  });
+
+  // 적
+  enemies.forEach((e, i) => {
+    e.y += 2;
+    drawTriangle(e.x, e.y, 10, "red");
+
+    // 살아 있을 때 탄막 발사 (기존보다 25% 감소)
+    if (e.cooldown <= 0 && Math.random() < 0.02) {
+      for (let a = 0; a < enemyBulletCount; a++) {
+        const angle = (a / enemyBulletCount) * Math.PI * 2;
+        enemyBullets.push({
+          x: e.x,
+          y: e.y,
+          dx: Math.cos(angle) * 2,
+          dy: Math.sin(angle) * 2,
+          size: enemyBulletSize
+        });
+      }
+      e.cooldown = 60;
+    } else e.cooldown--;
+
+    // 피격 판정
+    player.bullets.forEach((b, j) => {
+      if (Math.abs(b.x - e.x) < 10 && Math.abs(b.y - e.y) < 10) {
+        e.hp--;
+        player.bullets.splice(j, 1);
+        if (e.hp <= 0) {
+          enemies.splice(i, 1);
+          score += 100;
+        }
+      }
+    });
+
+    if (e.y > canvas.height + 20) enemies.splice(i, 1);
+  });
+
+  // 적 총알
+  enemyBullets.forEach((b, i) => {
+    b.x += b.dx;
+    b.y += b.dy;
+    ctx.fillStyle = "orange";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+    ctx.fill();
+    if (b.y > canvas.height || b.y < 0) enemyBullets.splice(i, 1);
+    if (Math.abs(b.x - player.x) < b.size + player.size && Math.abs(b.y - player.y) < b.size + player.size) {
+      enemyBullets.splice(i, 1);
+      player.hp--;
+      updateHearts();
+      if (player.hp <= 0) endGame();
+    }
+  });
+
+  // 파워업
+  powerups.forEach((p, i) => {
+    p.y += 2;
+    ctx.fillStyle = "lime";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    if (Math.abs(p.x - player.x) < 15 && Math.abs(p.y - player.y) < 15) {
+      powerups.splice(i, 1);
+      player.powerLevel = Math.min(player.powerLevel + 1, 2);
+    }
+  });
+
+  // 플레이어
+  drawTriangle(player.x, player.y, player.size, "white");
+
+  // 점수 / 보스 관리
+  if (!boss && score >= bossSpawnScore) spawnBoss();
+
+  // 보스 존재 시
+  if (boss) updateBoss();
+
+  document.getElementById("score").innerText = "Score: " + score;
+
+  requestAnimationFrame(loop);
 }
+
+function spawnBoss() {
+  boss = {x: canvas.width / 2, y: 80, hp: bossHpBase};
+}
+
+function updateBoss() {
+  ctx.fillStyle = "purple";
+  ctx.fillRect(boss.x - 40, boss.y - 20, 80, 40);
+  ctx.fillStyle = "red";
+  ctx.fillRect(boss.x - 40, boss.y - 30, (boss.hp / bossHpBase) * 80, 5);
+
+  if (Math.random() < 0.05) {
+    for (let a = 0; a < 16; a++) {
+      const angle = (a / 16) * Math.PI * 2;
+      enemyBullets.push({
+        x: boss.x,
+        y: boss.y,
+        dx: Math.cos(angle) * 3,
+        dy: Math.sin(angle) * 3,
+        size: enemyBulletSize * 1.5
+      });
+    }
+  }
+
+  player.bullets.forEach((b, j) => {
+    if (Math.abs(b.x - boss.x) < 40 && Math.abs(b.y - boss.y) < 40) {
+      boss.hp -= 10;
+      player.bullets.splice(j, 1);
+      if (boss.hp <= 0) {
+        score += 2000;
+        boss = null;
+        bossSpawnScore += 10000;
+        bossHpBase *= 2; // 체력 2배 증가
+        spawnInterval *= 0.9;
+        enemyBulletCount *= 1.1;
+      }
+    }
+  });
+}
+
+function updateHearts() {
+  const heartDisplay = "❤️".repeat(player.hp) + "🖤".repeat(3 - player.hp);
+  document.getElementById("lives").innerText = heartDisplay;
+}
+
+function endGame() {
+  gameOver = true;
+  alert("게임 오버! 점수: " + score);
+}
+
+setInterval(shoot, 200);
 loop();
 </script>
 </body>
